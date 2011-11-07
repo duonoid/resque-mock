@@ -8,8 +8,7 @@ module Resque
   module MockExt
     def async
       @async = true
-      create_worker_manager
-      yield
+      yield create_worker_manager
     ensure
       wait_for_worker_manager
       @async = false
@@ -38,13 +37,18 @@ module Resque
 
     def create_worker_manager
       @worker_manager = Thread.new do
-        Thread.current.abort_on_exception = true
+        Thread.current.abort_on_exception = thread_abort_on_exception
         worker_threads = []
 
         while true
           break if Thread.current[:exit] && worker_threads.empty? && Thread.current[:jobs].empty?
 
-          worker_threads.reject! {|t| !t.alive? }
+          worker_threads.each do |t|
+            unless t.alive?
+              worker_threads.delete(t)
+              t.join
+            end
+          end
 
           while Thread.current[:jobs] && job_data = Thread.current[:jobs].shift
             worker_threads << create_worker_thread_for(job_data)
@@ -63,7 +67,7 @@ module Resque
 
     def create_worker_thread_for(data)
       Thread.new(data) do |data|
-        Thread.current.abort_on_exception = true
+        Thread.current.abort_on_exception = thread_abort_on_exception
         if delay = data['delay']
           sleep delay
         end
@@ -82,5 +86,11 @@ module Resque
     def add_job(data)
       @worker_manager[:jobs] << data
     end
+
+    attr_accessor :thread_abort_on_exception
+    def thread_abort_on_exception
+      (@thread_abort_on_exception.nil? && true) || @thread_abort_on_exception
+    end
+
   end
 end
